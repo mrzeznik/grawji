@@ -14,9 +14,11 @@ from grawji.sidecar import (
     load_crop,
     load_exposure,
     load_marks,
+    load_recipe_name,
     save_crop,
     save_exposure,
     save_marks,
+    save_recipe_name,
     save_source,
     sidecar_path,
     summary,
@@ -149,3 +151,47 @@ def test_sidecar_source_lives_beside_the_rest(tmp_path: Path) -> None:
     assert summary(raf).source is Source.CAMERA
     save_source(raf, None)
     assert not sidecar_path(raf).exists()
+
+
+def test_sidecar_recipe_name_round_trip(tmp_path: Path) -> None:
+    """The per-image preset is stored by name, None clears it."""
+    raf = tmp_path / "DSCF0013.RAF"
+    raf.write_bytes(b"raf")
+    assert load_recipe_name(raf) is None
+    save_recipe_name(raf, "Velvia Warm")
+    stored = json.loads(sidecar_path(raf).read_text(encoding="utf-8"))
+    assert stored["recipe"] == "Velvia Warm"
+    assert load_recipe_name(raf) == "Velvia Warm"
+    assert summary(raf).has_recipe
+    save_recipe_name(raf, None)
+    assert load_recipe_name(raf) is None
+    assert not sidecar_path(raf).exists()
+
+
+def test_sidecar_recipe_name_lives_beside_the_rest(tmp_path: Path) -> None:
+    """Saving the preset keeps the other keys, and vice versa."""
+    raf = tmp_path / "DSCF0014.RAF"
+    raf.write_bytes(b"raf")
+    save_exposure(raf, 0.5)
+    save_recipe_name(raf, "CC Negative")
+    assert load_exposure(raf) == 0.5
+    assert load_recipe_name(raf) == "CC Negative"
+    save_exposure(raf, None)
+    assert load_recipe_name(raf) == "CC Negative"
+    assert sidecar_path(raf).exists()
+
+
+def test_sidecar_recipe_name_garbage_reads_as_absent(tmp_path: Path) -> None:
+    """A non-string or empty recipe value degrades to None."""
+    raf = tmp_path / "DSCF0015.RAF"
+    raf.write_bytes(b"raf")
+    sidecar_path(raf).write_text(
+        json.dumps({"version": 1, "recipe": {"film_simulation": "Velvia"}}),
+        encoding="utf-8",
+    )
+    assert load_recipe_name(raf) is None
+    sidecar_path(raf).write_text(
+        json.dumps({"version": 1, "recipe": ""}), encoding="utf-8"
+    )
+    assert load_recipe_name(raf) is None
+    assert not summary(raf).has_recipe

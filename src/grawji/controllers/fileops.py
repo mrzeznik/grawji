@@ -38,6 +38,7 @@ class FileOpsController:
         begin_export: Callable[[list[str]], str | None],
         set_status: Callable[[str], None],
         add_toast: Callable[[Adw.Toast], None],
+        apply_preset: Callable[[list[str]], None],
     ) -> None:
         """Wire the controller to its collaborators.
 
@@ -51,6 +52,7 @@ class FileOpsController:
                 complaint to show or None when it started.
             set_status: Shows a status-bar message.
             add_toast: Presents a toast.
+            apply_preset: Stores the current preset in the paths.
         """
         self._parent = parent
         self._settings = settings
@@ -60,6 +62,7 @@ class FileOpsController:
         self._begin_export = begin_export
         self._set_status = set_status
         self._add_toast = add_toast
+        self._apply_preset = apply_preset
         self._undo_moves: list[tuple[str, str]] = []
 
     def on_file_action(self, action: str, paths: list[str]) -> None:
@@ -76,6 +79,8 @@ class FileOpsController:
             self.move_paths(paths)
         elif action == "trash":
             self.trash_paths(paths, confirm=len(paths) > 1)
+        elif action == "apply-preset":
+            self._apply_preset(paths)
 
     def open_with(self, path: str) -> None:
         """Offer the system app chooser for one RAF."""

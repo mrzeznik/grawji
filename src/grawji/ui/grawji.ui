@@ -12,6 +12,10 @@
         <attribute name="label">Try Recipes…</attribute>
         <attribute name="action">win.try-recipes</attribute>
       </item>
+      <item>
+        <attribute name="label">Apply Current Preset to Selected</attribute>
+        <attribute name="action">win.apply-preset-selected</attribute>
+      </item>
     </section>
     <section>
       <item>

@@ -14,7 +14,7 @@ from gi.repository import Gdk, Gio, GLib, Gtk
 from grawji import mainloop
 from grawji.marks import MAX_RATING, STAR, Label, Marks
 
-ACTIONS = ("open-with", "export", "copy", "move", "trash")
+ACTIONS = ("open-with", "export", "copy", "move", "trash", "apply-preset")
 
 MarkAction = Callable[[str, object], None]
 
@@ -143,6 +143,9 @@ def popup_menu(
     files.append(f"Move to…{suffix}", "fileops.move")
     files.append(f"Move to Trash{suffix}", "fileops.trash")
     menu.append_section(None, files)
+    presets = Gio.Menu()
+    presets.append(f"Apply Current Preset{suffix}", "fileops.apply-preset")
+    menu.append_section(None, presets)
     popover = Gtk.PopoverMenu.new_from_model(menu)
     popover.set_parent(anchor)
     rect = Gdk.Rectangle()

@@ -54,6 +54,7 @@ from grawji.controllers.exports import (
 )
 from grawji.controllers.fileops import FileOpsController
 from grawji.controllers.marks import MarksController
+from grawji.controllers.presets import PresetController
 from grawji.imaging import imagemeta
 from grawji.imaging.pixbufs import trim_letterbox
 from grawji.imaging.render import (
@@ -222,11 +223,15 @@ class MainWindow(Adw.ApplicationWindow):
     toast_overlay = Gtk.Template.Child()
 
     _marks: MarksController
+    _presets: PresetController
     _mark_actions: list[Gio.SimpleAction]
     _exif_rows: list[Any]
     _exif_pairs: list[tuple[str, str]]
     _notified_models: set[str]
+    _notified_presets: set[str]
     _foreign_warned: set[str]
+    # The sidecar's per-image preset name, read with each selection.
+    _stored_preset: str | None = None
 
     def __init__(self, **kwargs: object) -> None:
         """Wire up the worker, the composite widgets and the controllers."""
@@ -243,7 +248,11 @@ class MainWindow(Adw.ApplicationWindow):
         self._image_ev: float | None = None
         self._shot_ev: float | None = None
         self._current_folder: str | None = None
-        self._notified_models, self._foreign_warned = set(), set()
+        (
+            self._notified_models,
+            self._foreign_warned,
+            self._notified_presets,
+        ) = set(), set(), set()
         self._exif_rows, self._exif_pairs = [], []
         self._render_pending_id = self._load_pending_id = 0
         self._error_showing = False
@@ -280,6 +289,7 @@ class MainWindow(Adw.ApplicationWindow):
             ),
             set_status=self.preview_view.set_status,
             add_toast=self.toast_overlay.add_toast,
+            apply_preset=self._apply_preset_to,
         )
         self._init_filmstrip()
 
@@ -404,6 +414,7 @@ class MainWindow(Adw.ApplicationWindow):
             ("cancel-selection", self._filmstrip.clear_selection, ()),
             ("manage-recipes", self._library.manage, ()),
             ("try-recipes", self._on_try_recipes, ()),
+            ("apply-preset-selected", self._apply_preset_to_selected, ()),
             ("backup-camera", self._backup.backup, ()),
             ("restore-camera", self._backup.restore, ()),
             ("zoom-in", view.zoom_in, ("<Ctrl>plus", "<Ctrl>equal")),
@@ -679,6 +690,10 @@ class MainWindow(Adw.ApplicationWindow):
             targets=self._filmstrip.mark_targets,
             on_changed=self._on_marks_changed,
         )
+        self._presets = PresetController(
+            folder=self._folder_model,
+            targets=self._filmstrip.mark_targets,
+        )
         self._filmstrip.set_glide_speed(self._settings.nav_glide_speed)
         self._filmstrip.set_hexpand(True)
         self._nav = FilmStripNav(self._filmstrip)
@@ -903,6 +918,7 @@ class MainWindow(Adw.ApplicationWindow):
             return GLib.SOURCE_REMOVE
         self.preview_view.set_crop(sidecar.load_crop(raf_path))
         self._stored_ev = sidecar.load_exposure(raf_path)
+        self._stored_preset = sidecar.load_recipe_name(raf_path)
         self._image_ev = None
         self._shot_ev = None
         # The camera open runs on its own worker. The embedded-preview read
@@ -1059,6 +1075,15 @@ class MainWindow(Adw.ApplicationWindow):
                 self._render_baseline(self._generation)
             return
         selection = self._settings.open_recipe
+        # A preset stored for this image wins over the sticky choice; an
+        # unresolvable name falls back to the sticky choice with a notice.
+        if self._stored_preset is not None:
+            if self._stored_preset == FROM_IMAGE:
+                selection = FROM_IMAGE
+            elif self._recipe_library.get(self._stored_preset) is not None:
+                selection = self._stored_preset
+            else:
+                self._notify_missing_preset(self._stored_preset, selection)
         saved = (
             None
             if selection == FROM_IMAGE
@@ -1293,6 +1318,73 @@ class MainWindow(Adw.ApplicationWindow):
             self._apply_from_image()
         else:
             self._library.apply(name)
+        self._remember_current_preset(name)
+
+    def _remember_current_preset(self, name: str) -> None:
+        """Store the panel's preset choice in the open image's sidecar.
+
+        Only the name lives in the sidecar; FROM_IMAGE clears the key so
+        the shot's own recipe stays the implicit default.
+        """
+        if self._raf_path is None:
+            return
+        stored = None if name == FROM_IMAGE else name
+        if self._presets.apply(stored, [str(self._raf_path)]):
+            self._stored_preset = stored
+
+    def _notify_missing_preset(self, name: str, fallback: str) -> None:
+        """Notice once per session that an image's stored preset is gone."""
+        if name in self._notified_presets:
+            return
+        self._notified_presets.add(name)
+        shown = (
+            "the shot's own recipe"
+            if fallback == FROM_IMAGE
+            else f"the chosen preset ({fallback})"
+        )
+        toast = Adw.Toast.new(f"Preset “{name}” not found - showing {shown}.")
+        toast.set_timeout(6)
+        self.toast_overlay.add_toast(toast)
+
+    def _apply_preset_to_selected(self) -> None:
+        """Store the current preset in the selected photos' sidecars."""
+        self._apply_preset_to(self._filmstrip.mark_targets())
+
+    def _apply_preset_to(self, paths: list[str]) -> None:
+        """Store the panel's current preset name in every path's sidecar.
+
+        Only saved library names (or the FROM_IMAGE choice, which clears
+        the key) can be stored by name; unsaved freeform edits must be
+        saved to the library first.
+        """
+        if not paths:
+            self.preview_view.set_status("Select some photos first.")
+            return
+        label = self.recipe_panel.active_label
+        if label == FROM_IMAGE_LABEL and not self.recipe_panel.is_modified:
+            changed = self._presets.apply(None, paths)
+            self.preview_view.set_status(
+                f"Restored the shot's own preset on {len(changed)} "
+                f"photo{'s' if len(changed) != 1 else ''}."
+            )
+            return
+        if self.recipe_panel.needs_save:
+            self.preview_view.set_status(
+                "Save the current recipe first (Ctrl+S) to apply it "
+                "to other photos."
+            )
+            return
+        if self._recipe_library.get(label) is None:
+            self.preview_view.set_status(
+                f"“{label}” is not a saved preset, so it cannot be "
+                "applied to other photos."
+            )
+            return
+        changed = self._presets.apply(label, paths)
+        self.preview_view.set_status(
+            f"Preset “{label}” applied to {len(changed)} "
+            f"photo{'s' if len(changed) != 1 else ''}."
+        )
 
     def _recipe_from_edit(self) -> None:
         """Pick an edited export of the open shot and match its look."""

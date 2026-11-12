@@ -78,6 +78,9 @@ def make_controller(
         begin_export=begin_export,
         set_status=state["statuses"].append,
         add_toast=state["toasts"].append,
+        apply_preset=lambda paths: state.setdefault("presets", []).append(
+            paths
+        ),
     )
     return controller, strip, state
 

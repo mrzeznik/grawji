@@ -1,8 +1,8 @@
 """Per-image sidecar storage.
 
 One sidecar per RAF holds everything grawji knows about that image
-beyond the recipe: the crop/rotate geometry, the per-image EV and the
-marks.
+beyond the recipe: the crop/rotate geometry, the per-image EV, the
+marks and the name of the per-image preset.
 The format contract: a top-level "version" plus one key per purpose.
 Readers ignore unknown keys, writers preserve them, and "version"
 only ever bumps on a break that ignoring keys cannot absorb.
@@ -83,6 +83,7 @@ class Summary:
 
     has_crop: bool = False
     has_ev: bool = False
+    has_recipe: bool = False
     marks: Marks = field(default_factory=Marks)
     source: Source | None = None
 
@@ -94,9 +95,11 @@ def summary(raf_path: Path | str) -> Summary:
     stored as absent keys, so key presence means a real edit.
     """
     data = _read(raf_path)
+    recipe = data.get("recipe")
     return Summary(
         has_crop="crop" in data,
         has_ev="exposure" in data,
+        has_recipe=isinstance(recipe, str) and bool(recipe),
         marks=Marks.from_dict(data.get("marks")),
         source=source_of(data.get("source")),
     )
@@ -113,6 +116,24 @@ def load_exposure(raf_path: Path | str) -> float | None:
 def save_exposure(raf_path: Path | str, exposure: float | None) -> None:
     """Store the RAF's per-image EV (None removes it)."""
     _update(raf_path, "exposure", exposure)
+
+
+def load_recipe_name(raf_path: Path | str) -> str | None:
+    """The RAF's stored preset name, or None when never set.
+
+    Only the name lives in the sidecar; the recipe itself is looked
+    up in the global library, so a deleted or renamed preset simply
+    reads back as a name the caller cannot resolve.
+    """
+    value = _read(raf_path).get("recipe")
+    if not isinstance(value, str) or not value:
+        return None
+    return value
+
+
+def save_recipe_name(raf_path: Path | str, name: str | None) -> None:
+    """Store the RAF's per-image preset name (None removes it)."""
+    _update(raf_path, "recipe", name or None)
 
 
 def load_marks(raf_path: Path | str) -> Marks:
